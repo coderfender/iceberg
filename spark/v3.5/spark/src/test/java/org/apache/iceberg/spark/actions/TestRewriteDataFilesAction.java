@@ -1426,6 +1426,42 @@ public class TestRewriteDataFilesAction extends SparkTestBase {
     Assert.assertNotEquals("Number of files order should not be ascending", actual, expected);
   }
 
+  @Test
+  public void testRewriteMaxFilesOption() {
+    Table table = createTablePartitioned(4, 2);
+    writeRecords(10, SCALE, 1);
+    writeRecords(20, SCALE, 2);
+    writeRecords(30, SCALE, 3);
+    writeRecords(40, SCALE, 4);
+    table.updateProperties().set(TableProperties.FORMAT_VERSION, "2").commit();
+    Result result =
+        actions()
+            .rewriteDataFiles(table)
+            .option(RewriteDataFiles.MAX_FILES_TO_REWRITE, "50000")
+            .execute();
+    table.refresh();
+    int filesReWritten = result.rewrittenDataFilesCount();
+    Assert.assertTrue(50000 >= filesReWritten);
+  }
+
+  @Test
+  public void testRewriteMaxFilesOptionEquality() {
+    Table table = createTablePartitioned(4, 2);
+    writeRecords(10, SCALE, 1);
+    writeRecords(20, SCALE, 2);
+    writeRecords(30, SCALE, 3);
+    writeRecords(40, SCALE, 4);
+    table.updateProperties().set(TableProperties.FORMAT_VERSION, "2").commit();
+    Result result =
+        actions()
+            .rewriteDataFiles(table)
+            .option(RewriteDataFiles.MAX_FILES_TO_REWRITE, "10")
+            .execute();
+    table.refresh();
+    int filesReWritten = result.rewrittenDataFilesCount();
+    Assert.assertEquals(10, filesReWritten);
+  }
+
   private Stream<RewriteFileGroup> toGroupStream(Table table, RewriteDataFilesSparkAction rewrite) {
     rewrite.validateAndInitOptions();
     StructLikeMap<List<List<FileScanTask>>> fileGroupsByPartition =

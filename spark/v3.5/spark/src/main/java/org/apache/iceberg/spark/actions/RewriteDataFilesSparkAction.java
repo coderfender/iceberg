@@ -20,6 +20,7 @@ package org.apache.iceberg.spark.actions;
 
 import java.io.IOException;
 import java.math.RoundingMode;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
@@ -81,7 +82,8 @@ public class RewriteDataFilesSparkAction
           PARTIAL_PROGRESS_MAX_COMMITS,
           TARGET_FILE_SIZE_BYTES,
           USE_STARTING_SEQUENCE_NUMBER,
-          REWRITE_JOB_ORDER);
+          REWRITE_JOB_ORDER,
+          MAX_FILES_TO_REWRITE);
 
   private static final RewriteDataFilesSparkAction.Result EMPTY_RESULT =
       ImmutableRewriteDataFiles.Result.builder().rewriteResults(ImmutableList.of()).build();
@@ -95,6 +97,7 @@ public class RewriteDataFilesSparkAction
   private boolean useStartingSequenceNumber;
   private RewriteJobOrder rewriteJobOrder;
   private FileRewriter<FileScanTask, DataFile> rewriter = null;
+  private Integer maxFilesToRewrite;
 
   RewriteDataFilesSparkAction(SparkSession spark, Table table) {
     super(spark.cloneSession());
@@ -377,15 +380,49 @@ public class RewriteDataFilesSparkAction
 
   Stream<RewriteFileGroup> toGroupStream(
       RewriteExecutionContext ctx, Map<StructLike, List<List<FileScanTask>>> groupsByPartition) {
-    return groupsByPartition.entrySet().stream()
-        .filter(e -> e.getValue().size() != 0)
-        .flatMap(
-            e -> {
-              StructLike partition = e.getKey();
-              List<List<FileScanTask>> scanGroups = e.getValue();
-              return scanGroups.stream().map(tasks -> newRewriteGroup(ctx, partition, tasks));
-            })
-        .sorted(RewriteFileGroup.comparator(rewriteJobOrder));
+    if (maxFilesToRewrite == null) {
+      return groupsByPartition.entrySet().stream()
+          .filter(e -> !e.getValue().isEmpty())
+          .flatMap(
+              e -> {
+                StructLike partition = e.getKey();
+                List<List<FileScanTask>> scanGroups = e.getValue();
+                return scanGroups.stream().map(tasks -> newRewriteGroup(ctx, partition, tasks));
+              })
+          .sorted(RewriteFileGroup.comparator(rewriteJobOrder));
+    }
+
+    LOG.info(
+        "Max files rewrite options provided for table {} with max file re-write value : {}",
+        table.name(),
+        maxFilesToRewrite);
+
+    List<RewriteFileGroup> selectedFileGroups = new ArrayList<>();
+    AtomicInteger fileCountRunner = new AtomicInteger(0);
+
+    groupsByPartition.entrySet().stream()
+        .parallel()
+        .filter(e -> !e.getValue().isEmpty())
+        .forEach(
+            entry -> {
+              StructLike partition = entry.getKey();
+              entry
+                  .getValue()
+                  .forEach(
+                      fileScanTasks -> {
+                        if (fileCountRunner.get() < maxFilesToRewrite) {
+                          int remainingSize = maxFilesToRewrite - fileCountRunner.get();
+                          int fileScanTaskListSize = fileScanTasks.size();
+                          List<FileScanTask> fileScanTaskListSizeTruncated =
+                              fileScanTasks.subList(
+                                  0, Math.min(fileScanTaskListSize, remainingSize));
+                          selectedFileGroups.add(
+                              newRewriteGroup(ctx, partition, fileScanTaskListSizeTruncated));
+                          fileCountRunner.getAndAdd(fileScanTaskListSizeTruncated.size());
+                        }
+                      });
+            });
+    return selectedFileGroups.stream().sorted(RewriteFileGroup.comparator(rewriteJobOrder));
   }
 
   private RewriteFileGroup newRewriteGroup(
@@ -415,6 +452,8 @@ public class RewriteDataFilesSparkAction
         rewriter.description());
 
     rewriter.init(options());
+
+    maxFilesToRewrite = PropertyUtil.propertyAsNullableInt(options(), MAX_FILES_TO_REWRITE);
 
     maxConcurrentFileGroupRewrites =
         PropertyUtil.propertyAsInt(
@@ -450,6 +489,12 @@ public class RewriteDataFilesSparkAction
         PARTIAL_PROGRESS_MAX_COMMITS,
         maxCommits,
         PARTIAL_PROGRESS_ENABLED);
+
+    Preconditions.checkArgument(
+        maxFilesToRewrite >= 1,
+        "Cannot set %s to %s, the value must be positive.",
+        MAX_FILES_TO_REWRITE,
+        maxFilesToRewrite);
   }
 
   private String jobDesc(RewriteFileGroup group, RewriteExecutionContext ctx) {
