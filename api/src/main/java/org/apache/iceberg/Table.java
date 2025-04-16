@@ -346,4 +346,12 @@ public interface Table {
 
     return null;
   }
+
+  class SnapshotDiff{
+
+  }
+
+  default SnapshotDiff getSnapshotDiff(Snapshot snapshot1, Snapshot snapshot2){
+    return null;
+  }
 }
