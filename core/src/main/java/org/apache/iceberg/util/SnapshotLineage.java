@@ -31,7 +31,7 @@ import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 
 public class SnapshotLineage {
 
-    public SnapshotLineage() throws Exception { throw new Exception("not implemeted!");}
+    public SnapshotLineage() throws Exception { throw new Exception("Not Implemented!");}
 
     public static List<Snapshot> getShortestSnapshotLineage(Table table, Snapshot s1, Snapshot s2) {
         List<Snapshot> pathToRootSnapshot1 = getPathToRoot(table, s1);
