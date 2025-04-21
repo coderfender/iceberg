@@ -46,6 +46,7 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.iceberg.ContentFile;
 import org.apache.iceberg.DataFile;
@@ -58,6 +59,7 @@ import org.apache.iceberg.RewriteJobOrder;
 import org.apache.iceberg.RowDelta;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Snapshot;
+import org.apache.iceberg.SnapshotRef;
 import org.apache.iceberg.SortOrder;
 import org.apache.iceberg.StructLike;
 import org.apache.iceberg.Table;
@@ -102,6 +104,7 @@ import org.apache.iceberg.types.Conversions;
 import org.apache.iceberg.types.Types;
 import org.apache.iceberg.types.Types.NestedField;
 import org.apache.iceberg.util.Pair;
+import org.apache.iceberg.util.SnapshotLineage;
 import org.apache.iceberg.util.StructLikeMap;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
@@ -1424,6 +1427,20 @@ public class TestRewriteDataFilesAction extends SparkTestBase {
     Assert.assertEquals("Number of files order should be descending", actual, expected);
     Collections.reverse(expected);
     Assert.assertNotEquals("Number of files order should not be ascending", actual, expected);
+  }
+
+  @Test
+  public void testNewTableAPI() {
+    Table table = createTablePartitioned(4, 3);
+    writeRecords(1, SCALE, 1);
+    writeRecords(2, SCALE, 2);
+    writeRecords(3, SCALE, 3);
+    writeRecords(4, SCALE, 4);
+    table.updateProperties().set(TableProperties.FORMAT_VERSION, "2").commit();
+    List<Snapshot> snapshots = StreamSupport.stream(table.snapshots().spliterator(),false).collect(Collectors.toList());
+    Snapshot first = snapshots.get(0);
+    Snapshot last = snapshots.get(snapshots.size() - 1);
+    List<Snapshot> snapshot = SnapshotLineage.getShortestSnapshotLineage(table,first, last);
   }
 
   private Stream<RewriteFileGroup> toGroupStream(Table table, RewriteDataFilesSparkAction rewrite) {
